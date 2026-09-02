@@ -5,7 +5,11 @@ import json
 import time
 import os
 import io
+import math
+import uuid
 import base64
+import logging
+import zipfile
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFilter
 from shapely.geometry import Polygon
@@ -15,508 +19,390 @@ from streamlit_folium import st_folium
 import qrcode
 from fpdf import FPDF
 
-# Safe import for YOLO to prevent app crashes if dependencies are missing
+# Voice Assistant & AI Imports
+try:
+    from gtts import gTTS
+    AUDIO_OK = True
+except ImportError:
+    AUDIO_OK = False
+
 try:
     from ultralytics import YOLO
     AI_AVAILABLE = True
 except ImportError:
     AI_AVAILABLE = False
 
+logging.basicConfig(level=logging.ERROR)
+
 # =====================================================================
-# 1. SYSTEM INITIALIZATION & STATE
+# 1. INTERNATIONALIZATION (LANGUAGES)
 # =====================================================================
-st.set_page_config(
-    page_title="DroneMap AI — Autonomous Cadastral Platform",
-    page_icon="🛰️",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+TRANSLATIONS = {
+    "en": {
+        "tag": "SVAMITVA Scheme Compliant", "hero": "Mapping the Future of", "hero_span": "Land Ownership",
+        "sub": "DroneMap AI transforms raw aerial telemetry into dispute-free, legally binding cadastral property titles instantly.",
+        "btn_explore": "Launch Command Studio", "login_title": "Secure Surveyor Access",
+        "login_sub": "Authorized Personnel Only", "btn_login": "Authenticate",
+        "tab1": "1️⃣ Extraction Studio", "tab2": "2️⃣ Interactive WebGIS", "tab3": "3️⃣ Audit Ledger"
+    },
+    "hi": {
+        "tag": "स्वामित्व योजना अनुरूप", "hero": "भूमि स्वामित्व के", "hero_span": "भविष्य का मानचित्रण",
+        "sub": "DroneMap AI कच्चे ड्रोन डेटा को सत्यापन-योग्य भूमि अभिलेखों में बदलता है।",
+        "btn_explore": "कमांड स्टूडियो खोलें", "login_title": "सर्वेक्षक लॉगिन",
+        "login_sub": "केवल अधिकृत कर्मियों के लिए", "btn_login": "लॉगिन करें",
+        "tab1": "1️⃣ निष्कर्षण स्टूडियो", "tab2": "2️⃣ इंटरैक्टिव WebGIS", "tab3": "3️⃣ ऑडिट रजिस्टर"
+    },
+    "bn": {
+        "tag": "SVAMITVA প্রকল্প অনুবর্তী", "hero": "ভূমি মালিকানার", "hero_span": "ভবিষ্যৎ মানচিত্রায়ণ",
+        "sub": "DroneMap AI কাঁচা ড্রোন তথ্যকে যাচাইযোগ্য ভূমি নথিতে রূপান্তর করে।",
+        "btn_explore": "কমান্ড স্টুডিও চালু করুন", "login_title": "নিরাপদ সার্ভেয়ার অ্যাক্সেস",
+        "login_sub": "শুধুমাত্র অনুমোদিত কর্মীদের জন্য", "btn_login": "প্রবেশ করুন",
+        "tab1": "1️⃣ নিষ্কাশন স্টুডিও", "tab2": "2️⃣ ইন্টারেক্টিভ WebGIS", "tab3": "3️⃣ অডিট লেজার"
+    }
+}
+
+def t(key):
+    lang = st.session_state.get("lang", "en")
+    return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
+
+def play_voice(text, lang='en'):
+    if not AUDIO_OK: return
+    try:
+        tts = gTTS(text=text, lang=lang, slow=False)
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        b64 = base64.b64encode(fp.getvalue()).decode()
+        st.components.v1.html(f'<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', height=0, width=0)
+    except Exception: pass
+
+# =====================================================================
+# 2. SYSTEM INITIALIZATION & STATE
+# =====================================================================
+st.set_page_config(page_title="DroneMap AI | Master System", page_icon="🛰️", layout="wide", initial_sidebar_state="collapsed")
 
 def init_state(key, default):
-    if key not in st.session_state:
-        st.session_state[key] = default
+    if key not in st.session_state: st.session_state[key] = default
 
-# Core Navigation & Data States
 init_state("view", "landing")
 init_state("theme", "dark")
+init_state("lang", "en")
+init_state("auth", False)
+init_state("user", "")
 init_state("raw_img", None)
 init_state("ai_img", None)
 init_state("survey_df", pd.DataFrame())
 init_state("geo_json", None)
 init_state("extracted", False)
-
-# Tunable Parameters
-init_state("anchor_lat", 22.5726)
-init_state("anchor_lon", 88.3639)
+init_state("is_demo", False)
 init_state("gsd", 0.05)
 init_state("conf", 0.25)
-init_state("latency", 0.0)
+init_state("anchor_lat", 22.5726)
+init_state("anchor_lon", 88.3639)
 
-M_TO_DEG = 0.000009  # Approx degrees per meter
-
-def set_view(v):
-    st.session_state.view = v
-
-def toggle_theme():
-    st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
+def set_view(v): st.session_state.view = v
+def toggle_theme(): st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
 
 # =====================================================================
-# 2. OPTIMIZED ASSET CACHING (PREVENTS LAG)
-# =====================================================================
-@st.cache_data(show_spinner=False)
-def get_base64_image(image_path, fallback_color=(30, 41, 59)):
-    """Encodes local images to Base64 ONCE, generating a failsafe if missing."""
-    if image_path and os.path.exists(image_path):
-        with open(image_path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    else:
-        img = Image.new("RGB", (800, 500), color=fallback_color)
-        draw = ImageDraw.Draw(img)
-        draw.rectangle([50, 50, 750, 450], outline=(100, 116, 139), width=3)
-        draw.text((320, 240), f"[Missing Asset]", fill=(203, 213, 225))
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        return base64.b64encode(buffer.getvalue()).decode()
-
-# =====================================================================
-# 3. HIGH-PERFORMANCE UI/UX CSS ENGINE
+# 3. MODERN GLASSMORPHISM CSS
 # =====================================================================
 def inject_theme():
     is_dark = st.session_state.theme == "dark"
-    
-    bg_base = "#0B0F19" if is_dark else "#F8FAFC"
-    surface = "rgba(15, 23, 42, 0.85)" if is_dark else "rgba(255, 255, 255, 0.9)"
-    surface_solid = "#1E293B" if is_dark else "#FFFFFF"
+    bg = "#0B0F19" if is_dark else "#F1F5F9"
+    surface = "rgba(17, 20, 29, 0.65)" if is_dark else "rgba(255, 255, 255, 0.75)"
+    solid = "#11141D" if is_dark else "#FFFFFF"
     border = "rgba(255, 255, 255, 0.1)" if is_dark else "rgba(15, 23, 42, 0.1)"
     text = "#F8FAFC" if is_dark else "#0F172A"
-    subtext = "#94A3B8" if is_dark else "#475569"
-    accent = "#0EA5E9" if is_dark else "#0284C7"
+    accent = "#0EA5E9"
     
     st.markdown(f"""
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-        
-        :root {{
-            --bg-base: {bg_base}; --text: {text}; --subtext: {subtext};
-            --surface: {surface}; --surface-solid: {surface_solid};
-            --border: {border}; --accent: {accent};
-        }}
-        
-        * {{ font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.015em; }}
-        
-        .stApp, [data-testid="stHeader"] {{ background-color: var(--bg-base); color: var(--text); }}
-        [data-testid="block-container"] {{ padding-top: 5rem !important; }}
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+        * {{ font-family: 'Plus Jakarta Sans', sans-serif; }}
+        .stApp, [data-testid="stHeader"] {{ background-color: {bg}; color: {text}; transition: all 0.3s; }}
+        [data-testid="block-container"] {{ padding-top: 6rem !important; }}
         #MainMenu, footer {{ visibility: hidden; }}
         
-        .floating-nav {{
-            position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
-            width: 95%; max-width: 1400px; z-index: 99999;
-            background: var(--surface); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--border); border-radius: 9999px;
-            padding: 10px 30px; display: flex; justify-content: space-between; align-items: center;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        .nav-island {{
+            position: fixed; top: 15px; left: 50%; transform: translateX(-50%); width: 95%; max-width: 1400px; z-index: 99999;
+            background: {surface}; backdrop-filter: blur(16px); border: 1px solid {border}; border-radius: 9999px;
+            padding: 10px 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 10px 30px rgba(0,0,0,0.1);
         }}
         
-        [data-testid="stSidebar"] {{ background-color: var(--surface-solid) !important; border-right: 1px solid var(--border); }}
-        .stTabs [data-baseweb="tab-list"] {{ background-color: transparent !important; }}
-        .stTabs [data-baseweb="tab"] {{ color: var(--text) !important; font-weight: 600; }}
-        .stTabs [aria-selected="true"] {{ border-bottom-color: var(--accent) !important; }}
+        [data-testid="stSidebar"] {{ background-color: {solid} !important; border-right: 1px solid {border}; }}
+        h1, h2, h3, h4 {{ color: {text} !important; font-weight: 700; letter-spacing: -0.02em; }}
+        p, span, div {{ color: {text}; }}
         
-        h1, h2, h3, h4, h5, h6 {{ font-weight: 700; color: var(--text) !important; letter-spacing: -0.03em !important; }}
-        p, span, label, div {{ color: var(--text); }}
+        /* Hero */
+        .hero-wrap {{ text-align: center; max-width: 900px; margin: 50px auto; }}
+        .hero-title {{ font-size: clamp(2.5rem, 5vw, 4.5rem); font-weight: 800; line-height: 1.1; margin: 20px 0; }}
+        .hero-title span {{ color: {accent}; }}
         
-        .hero-wrap {{ max-width: 900px; margin: 60px auto 40px auto; text-align: center; }}
-        .hero-title {{ font-size: clamp(2.5rem, 5vw, 4.5rem); line-height: 1.1; font-weight: 800; margin-bottom: 24px; color: var(--text); }}
-        .hero-title span {{ color: var(--accent); }}
-        .hero-sub {{ font-size: 1.15rem; color: var(--subtext) !important; line-height: 1.6; margin: 0 auto 40px auto; max-width: 700px; }}
+        /* Slideshow Animation */
+        .story-block {{ display: grid; grid-template-columns: 1fr 1fr; gap: 50px; padding: 60px 20px; align-items: center; border-top: 1px solid {border}; }}
+        .slideshow {{ border-radius: 16px; overflow: hidden; height: 350px; position: relative; border: 1px solid {border}; box-shadow: 0 20px 40px rgba(0,0,0,0.1); }}
+        .slide-img {{ position: absolute; width: 100%; height: 100%; object-fit: cover; opacity: 0; animation: fade 16s infinite; }}
+        .slide-img:nth-child(1) {{ animation-delay: 0s; }} .slide-img:nth-child(2) {{ animation-delay: 4s; }}
+        .slide-img:nth-child(3) {{ animation-delay: 8s; }} .slide-img:nth-child(4) {{ animation-delay: 12s; }}
+        @keyframes fade {{ 0% {{opacity: 0;}} 10% {{opacity: 1;}} 25% {{opacity: 1;}} 35% {{opacity: 0;}} 100% {{opacity: 0;}} }}
         
-        .story-block {{ display: grid; grid-template-columns: 1fr 1fr; gap: 60px; padding: 60px 20px; align-items: center; max-width: 1200px; margin: 0 auto; border-top: 1px solid var(--border); }}
-        .story-block.reversed {{ grid-template-columns: 1fr 1fr; direction: rtl; }}
-        .story-block.reversed > div {{ direction: ltr; }}
-        .story-tag {{ font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }}
+        /* Glass Auth & Cards */
+        .glass-box {{ background: {solid}; border: 1px solid {accent}; border-radius: 16px; padding: 40px; max-width: 450px; margin: 10vh auto; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.2); }}
+        .metric-tile {{ background: {solid}; border: 1px solid {border}; border-radius: 12px; padding: 20px; text-align: center; }}
+        .metric-val {{ font-size: 2.2rem; font-weight: 800; color: {accent}; }}
         
-        .slideshow-wrapper {{
-            border-radius: 16px; overflow: hidden; border: 1px solid var(--border); 
-            height: 380px; background: var(--surface-solid); box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            position: relative;
-        }}
-        .slide-img {{
-            position: absolute; width: 100%; height: 100%; object-fit: cover;
-            opacity: 0; animation: smoothFade 16s infinite;
-        }}
-        .slide-img:nth-child(1) {{ animation-delay: 0s; }}
-        .slide-img:nth-child(2) {{ animation-delay: 4s; }}
-        .slide-img:nth-child(3) {{ animation-delay: 8s; }}
-        .slide-img:nth-child(4) {{ animation-delay: 12s; }}
-
-        @keyframes smoothFade {{
-            0%   {{ opacity: 0; }}
-            10%  {{ opacity: 1; }}
-            25%  {{ opacity: 1; }}
-            35%  {{ opacity: 0; }}
-            100% {{ opacity: 0; }}
-        }}
-        
-        /* Auth Container */
-        .auth-gate {{ background: var(--surface-solid); border: 1px solid var(--accent); border-radius: 16px; padding: 40px; max-width: 450px; margin: 10vh auto; box-shadow: 0 20px 50px rgba(0,0,0,0.2); text-align:center; }}
-        
-        .metric-tile {{ 
-            background: var(--surface-solid); border: 1px solid var(--border); 
-            border-radius: 12px; padding: 20px; text-align: center; 
-        }}
-        .metric-val {{ font-size: 2.2rem; font-weight: 800; color: var(--accent); }}
-        .metric-lbl {{ font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--subtext); margin-top: 6px; }}
-        
-        .stButton > button {{ border-radius: 9999px !important; padding: 8px 24px !important; font-weight: 600 !important; border: 1px solid var(--border) !important; background: var(--surface-solid) !important; color: var(--text) !important; transition: all 0.2s !important; }}
-        .stButton > button:hover {{ border-color: var(--accent) !important; color: var(--accent) !important; }}
-        .stButton > button[data-testid="baseButton-primary"] {{ background: var(--text) !important; color: var(--bg-base) !important; border: none !important; }}
-        .stButton > button[data-testid="baseButton-primary"]:hover {{ background: var(--accent) !important; color: #FFF !important; }}
-
-        @media (max-width: 768px) {{
-            .story-block, .story-block.reversed {{ grid-template-columns: 1fr; gap: 30px; }}
-            .slideshow-wrapper {{ height: 240px; }}
-            .floating-nav {{ padding: 10px 15px; border-radius: 12px; top: 10px; width: 92%; flex-wrap: wrap; justify-content: center; gap: 10px; }}
-            [data-testid="block-container"] {{ padding-top: 8rem !important; }}
-        }}
+        .stButton > button {{ border-radius: 9999px !important; font-weight: 600 !important; background: {solid} !important; border: 1px solid {border} !important; color: {text} !important; }}
+        .stButton > button[data-testid="baseButton-primary"] {{ background: {text} !important; color: {bg} !important; border: none !important; }}
     </style>
     """, unsafe_allow_html=True)
 
 inject_theme()
 
 # =====================================================================
-# 4. ROBUST PROCESSING ENGINES
+# 4. ROBUST ENGINES & EXPORTS
 # =====================================================================
+def px_to_latlon(px_x, px_y, anchor_lat, anchor_lon, gsd):
+    lat_rad = math.radians(anchor_lat)
+    lon_deg_per_m = 1.0 / (111320 * math.cos(lat_rad))
+    lat_deg_per_m = 1.0 / 110540 
+    return [anchor_lon + (px_x * gsd * lon_deg_per_m), anchor_lat - (px_y * gsd * lat_deg_per_m)]
+
+@st.cache_data(show_spinner=False)
+def get_base64_image(image_path):
+    if image_path and os.path.exists(image_path):
+        with open(image_path, "rb") as f: return base64.b64encode(f.read()).decode()
+    img = Image.new("RGB", (800, 500), color=(30,41,59))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
 @st.cache_resource
 def load_segmentation_model():
     if not AI_AVAILABLE: return None
-    try:
-        return YOLO("best.pt") if os.path.exists("best.pt") else YOLO("yolov8n-seg.pt")
-    except Exception as e:
-        st.error(f"AI Model Error: {e}")
-        return None
+    try: return YOLO("best.pt") if os.path.exists("best.pt") else YOLO("yolov8n-seg.pt")
+    except: return None
 
-def make_qr_code(data):
-    try:
-        qr = qrcode.QRCode(box_size=4, border=1)
-        qr.add_data(data)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="#0F172A", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return base64.b64encode(buf.getvalue()).decode()
-    except Exception:
-        return ""
+def make_qr(data):
+    qr = qrcode.QRCode(box_size=4, border=1)
+    qr.add_data(data)
+    buf = io.BytesIO()
+    qr.make_image(fill_color="#0F172A", back_color="white").save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
 
 class SVAMITVADocument(FPDF):
     def header(self):
         self.set_font("Helvetica", 'B', 15)
-        self.set_text_color(15, 23, 42)
         self.cell(0, 10, "MINISTRY OF PANCHAYATI RAJ", ln=True, align="C")
         self.set_font("Helvetica", '', 11)
-        self.set_text_color(100, 116, 139)
         self.cell(0, 6, "SVAMITVA Property Register Record", ln=True, align="C")
-        self.ln(6)
-        self.line(10, 32, 200, 32)
+        self.line(10, 30, 200, 30)
         self.ln(6)
 
-def generate_pdf(row, lat, lon):
-    try:
-        pdf = SVAMITVADocument(orientation='P', unit='mm', format='A4')
-        pdf.add_page()
-        pdf.set_font("Helvetica", 'B', 11)
-        pdf.set_text_color(15, 23, 42)
-        
-        entries = [
-            ("Unique Parcel ID (UPIN)", str(row['UPIN'])),
-            ("Registered Ground Area", f"{row['Area (m²)']} Sq. Meters"),
-            ("Boundary Perimeter", f"{row['Perimeter (m)']} Meters"),
-            ("Geospatial Centroid", f"{lat} N, {lon} E"),
-            ("Coordinate System", "EPSG:4326 (WGS 84)"),
-            ("AI Validation Confidence", f"{row['Confidence (%)']}%"),
-            ("Survey Clearance Status", "OFFICIALLY VERIFIED"),
-            ("Issuance Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        ]
-        for lbl, val in entries:
-            pdf.set_font("Helvetica", 'B', 10)
-            pdf.cell(60, 8, f"{lbl}:", border=0)
-            pdf.set_font("Helvetica", '', 10)
-            pdf.cell(0, 8, val, border=0, ln=True)
-        return pdf.output(dest='S').encode('latin-1')
-    except Exception:
-        return None
+def generate_pdf(row, lat, lon, user):
+    pdf = SVAMITVADocument(orientation='P', unit='mm', format='A4')
+    pdf.add_page()
+    pdf.set_font("Helvetica", 'B', 11)
+    entries = [
+        ("UPIN", str(row['UPIN'])), ("Area", f"{row['Area (m²)']} sqm"),
+        ("Perimeter", f"{row['Perimeter (m)']} m"), ("Centroid", f"{lat:.6f} N, {lon:.6f} E"),
+        ("Confidence", f"{row['Confidence (%)']}%"), ("Verified By", user),
+        ("Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    ]
+    for k, v in entries:
+        pdf.set_font("Helvetica", 'B', 10)
+        pdf.cell(50, 8, f"{k}:", border=0)
+        pdf.set_font("Helvetica", '', 10)
+        pdf.cell(0, 8, v, border=0, ln=True)
+    out = pdf.output()
+    return bytes(out) if isinstance(out, (bytearray, bytes)) else out.encode('latin-1')
 
-def generate_synthetic_orthomosaic():
+def generate_batch_zip(df, lat, lon, user):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for _, row in df.iterrows():
+            zf.writestr(f"{row['UPIN']}.pdf", generate_pdf(row, lat, lon, user))
+    buf.seek(0)
+    return buf.getvalue()
+
+def demo_map():
     img = Image.new("RGB", (1100, 750), color=(50, 65, 45))
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 330, 1100, 410], fill=(40, 42, 45))
-    draw.line([0, 370, 1100, 370], fill=(220, 220, 220), width=3)
-    plots = [
-        ([60, 50, 280, 280], (165, 80, 50)), ([340, 60, 590, 290], (180, 90, 60)),
-        ([660, 50, 940, 280], (150, 70, 45)), ([70, 450, 300, 680], (190, 85, 55)),
-        ([360, 440, 630, 670], (160, 70, 45)), ([690, 450, 950, 680], (135, 65, 40))
-    ]
-    for box, c in plots:
-        draw.rectangle(box, fill=c, outline=(25, 25, 25), width=3)
-        draw.rectangle([box[0]+20, box[1]+20, box[2]-20, box[3]-20], fill=(min(c[0]+25, 255), min(c[1]+25, 255), min(c[2]+25, 255)))
+    for b, c in [([60,50,280,280],(165,80,50)), ([340,60,590,290],(180,90,60)), ([660,50,940,280],(150,70,45))]:
+        draw.rectangle(b, fill=c, outline=(25,25,25), width=3)
     return img.filter(ImageFilter.GaussianBlur(radius=0.4))
 
 # =====================================================================
-# 5. FLOATING DYNAMIC ISLAND NAVBAR (No Black Bar Bug)
+# 5. NAVIGATION ISLAND & VOICE ASSISTANT
 # =====================================================================
-st.markdown("<div class='floating-nav'>", unsafe_allow_html=True)
-c_logo, c_space, c_toggle, c_cta = st.columns([3, 5, 1.5, 2])
-
+st.markdown("<div class='nav-island'>", unsafe_allow_html=True)
+c_logo, c_lang, c_toggle, c_cta = st.columns([4, 2, 2, 2])
 with c_logo:
-    # Safely scan for jpeg, jpg, or png logo
-    logo_file = None
-    mime_type = "image/png"
-    for ext in ["jpeg", "jpg", "png"]:
-        if os.path.exists(f"my_logo.{ext}"):
-            logo_file = f"my_logo.{ext}"
-            mime_type = f"image/{'jpeg' if ext in ['jpg', 'jpeg'] else 'png'}"
-            break
-            
-    logo_b64 = get_base64_image(logo_file) if logo_file else get_base64_image("logo.png")
-    blend = "normal" if st.session_state.theme == "dark" else "multiply"
-    
-    st.markdown(f"<div style='display:flex; align-items:center; gap:10px;'><img src='data:{mime_type};base64,{logo_b64}' alt='Logo' style='height:30px; mix-blend-mode:{blend};'><span style='font-weight:700; font-size:1.1rem; color:var(--text);'>DroneMap AI</span></div>", unsafe_allow_html=True)
+    logo = next((f"my_logo.{e}" for e in ["png","jpg","jpeg"] if os.path.exists(f"my_logo.{e}")), "logo.png")
+    st.markdown(f"<div style='display:flex; align-items:center; gap:10px;'><img src='data:image/png;base64,{get_base64_image(logo)}' height='30'><span style='font-weight:700;'>DroneMap AI</span></div>", unsafe_allow_html=True)
+
+with c_lang:
+    lang_sel = st.selectbox("🌐", ["en", "hi", "bn"], index=["en","hi","bn"].index(st.session_state.lang), label_visibility="collapsed")
+    if lang_sel != st.session_state.lang:
+        st.session_state.lang = lang_sel
+        st.rerun()
 
 with c_toggle:
-    t_icon = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
-    st.button(t_icon, on_click=toggle_theme, use_container_width=True)
+    st.button("☀️" if st.session_state.theme == "dark" else "🌙", on_click=toggle_theme, use_container_width=True)
 
 with c_cta:
     if st.session_state.view == "landing":
-        st.button("Launch App", type="primary", on_click=set_view, args=("auth",), use_container_width=True)
+        st.button(t("btn_explore"), type="primary", on_click=set_view, args=("auth",), use_container_width=True)
     elif st.session_state.view == "auth":
-        st.button("Return Home", on_click=set_view, args=("landing",), use_container_width=True)
+        st.button("Back", on_click=set_view, args=("landing",), use_container_width=True)
     else:
-        st.button("Exit System", on_click=set_view, args=("landing",), use_container_width=True)
+        with st.popover("⚙️ Menu", use_container_width=True):
+            st.markdown(f"**ID:** `{st.session_state.user}`")
+            if st.button("🎙️ Audio Briefing"):
+                msgs = {"en": "Workspace ready.", "hi": "सिस्टम तैयार है।", "bn": "সিস্টেম প্রস্তুত।"}
+                play_voice(msgs[st.session_state.lang], st.session_state.lang)
+            if st.button("Logout", type="primary"):
+                st.session_state.auth = False
+                set_view("landing")
+                st.rerun()
 st.markdown("</div>", unsafe_allow_html=True)
 
 # =====================================================================
-# VIEW 1: LANDING PAGE (SLIDESHOW STORY MODE)
+# 6. ROUTING (LANDING -> AUTH -> WORKSPACE)
 # =====================================================================
 if st.session_state.view == "landing":
-
-    st.markdown("""
+    st.markdown(f"""
     <div class="hero-wrap">
-        <div style="display:inline-block; border: 1px solid var(--accent); color: var(--accent); padding: 6px 16px; border-radius: 9999px; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; margin-bottom: 20px; background: rgba(14, 165, 233, 0.1);">SVAMITVA Scheme Compliant</div>
-        <div class="hero-title">Mapping the Future of<br><span>Land Ownership</span></div>
-        <div class="hero-sub">Over 60% of rural land parcels lack formal boundaries. DroneMap AI transforms raw aerial telemetry into dispute-free, legally binding cadastral property titles instantly.</div>
+        <div style="display:inline-block; border: 1px solid var(--accent); color: var(--accent); padding: 6px 16px; border-radius: 9999px; font-size: 0.8rem; font-weight: 700;">{t('tag')}</div>
+        <div class="hero-title">{t('hero')}<br><span>{t('hero_span')}</span></div>
+        <p style="font-size: 1.1rem; color: var(--subtext); max-width:700px; margin:0 auto;">{t('sub')}</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([2,1,2])
+    with col2: st.button(t('btn_explore'), type="primary", on_click=set_view, args=("auth",), use_container_width=True)
 
-    c_b1, c_b2, c_b3 = st.columns([1.6, 1.2, 1.6])
-    with c_b2:
-        st.button("Explore the Engine", type="primary", on_click=set_view, args=("auth",), use_container_width=True)
-
-    # Narrative 1: The Challenge
-    ch1 = get_base64_image("challenge_1.png", (45, 55, 72))
-    ch2 = get_base64_image("challenge_2.png", (40, 50, 65))
-    ch3 = get_base64_image("challenge_3.png", (50, 60, 75))
-    ch4 = get_base64_image("challenge_4.png", (42, 52, 68))
-
+    c1 = get_base64_image("challenge_1.png")
+    c2 = get_base64_image("challenge_2.png")
     st.markdown(f"""
-    <div class="story-block">
+    <div class="story-block" style="margin-top:60px;">
         <div>
-            <div class="story-tag">The Cadastral Challenge</div>
-            <h2 style="font-size: clamp(1.8rem, 3vw, 2.5rem); margin-bottom: 20px;">Unlocking Dead Capital</h2>
-            <p style="color: var(--subtext); line-height: 1.7;">Traditional chain surveys take months to resolve single village settlements. Without certified records, landowners are locked out of credit, sparking generations of litigation.</p>
+            <h2 style="font-size: 2rem;">The Cadastral Challenge</h2>
+            <p style="color: var(--subtext); line-height: 1.7;">Traditional surveys take months. Without certified records, landowners are locked out of credit.</p>
         </div>
-        <div class="slideshow-wrapper">
-            <img src="data:image/png;base64,{ch1}" class="slide-img">
-            <img src="data:image/png;base64,{ch2}" class="slide-img">
-            <img src="data:image/png;base64,{ch3}" class="slide-img">
-            <img src="data:image/png;base64,{ch4}" class="slide-img">
-        </div>
+        <div class="slideshow"><img src="data:image/png;base64,{c1}" class="slide-img"><img src="data:image/png;base64,{c2}" class="slide-img"></div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Narrative 2: The Solution
-    sol1 = get_base64_image("solution_1.png", (15, 23, 42))
-    sol2 = get_base64_image("solution_2.png", (16, 30, 50))
-    sol3 = get_base64_image("solution_3.png", (14, 26, 45))
-    sol4 = get_base64_image("solution_4.png", (18, 35, 58))
-
-    st.markdown(f"""
-    <div class="story-block reversed" style="border-bottom: 1px solid var(--border); margin-bottom: 60px;">
-        <div class="slideshow-wrapper">
-            <img src="data:image/png;base64,{sol1}" class="slide-img">
-            <img src="data:image/png;base64,{sol2}" class="slide-img">
-            <img src="data:image/png;base64,{sol3}" class="slide-img">
-            <img src="data:image/png;base64,{sol4}" class="slide-img">
-        </div>
-        <div>
-            <div class="story-tag">Autonomous Vectorization</div>
-            <h2 style="font-size: clamp(1.8rem, 3vw, 2.5rem); margin-bottom: 20px;">Pixels to Titles in Seconds</h2>
-            <p style="color: var(--subtext); line-height: 1.7;">Processing sub-decimeter GSD orthomosaics with YOLOv8 neural networks, our pipeline identifies footprints, flags encroachments, and outputs survey-grade OGC GeoJSON.</p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# =====================================================================
-# VIEW 2: SECURE GATEWAY
-# =====================================================================
 elif st.session_state.view == "auth":
-    st.markdown("<div class='auth-gate'>", unsafe_allow_html=True)
-    st.markdown("<h2 style='color:var(--accent); margin-bottom: 5px;'>Secure Access</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='color:var(--subtext); margin-bottom: 30px;'>Authorized Surveyors Only</p>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class='glass-box'>
+        <h2 style='color:var(--accent);'>{t('login_title')}</h2>
+        <p style='color:var(--subtext); margin-bottom:30px;'>{t('login_sub')}</p>
+    </div>""", unsafe_allow_html=True)
     
-    uid = st.text_input("Surveyor ID", value="SV-4029")
-    pwd = st.text_input("Access Protocol", type="password", value="demo")
-    
-    if st.button("Authenticate", type="primary", use_container_width=True):
-        with st.spinner("Verifying credentials..."):
-            time.sleep(1)
-            if uid:
+    c1, c2, c3 = st.columns([1,1,1])
+    with c2:
+        uid = st.text_input("Surveyor ID", value="SV-001")
+        pwd = st.text_input("Passcode", type="password", value="demo")
+        if st.button(t('btn_login'), type="primary", use_container_width=True):
+            with st.spinner("Authenticating..."):
+                time.sleep(1)
+                st.session_state.auth = True
+                st.session_state.user = uid
                 set_view("workspace")
                 st.rerun()
-            else:
-                st.error("Invalid ID.")
-    st.markdown("</div>", unsafe_allow_html=True)
 
-# =====================================================================
-# VIEW 3: COMMAND CENTER (WORKSPACE)
-# =====================================================================
-elif st.session_state.view == "workspace":
-
+elif st.session_state.view == "workspace" and st.session_state.auth:
     with st.sidebar:
-        st.markdown("### 1. Data Ingestion")
-        uploaded_file = st.file_uploader("Upload Orthomosaic (.PNG/.JPG)", type=["png", "jpg", "jpeg", "tif"], label_visibility="collapsed")
-        
-        if uploaded_file:
-            try:
-                st.session_state.raw_img = Image.open(uploaded_file).convert("RGB")
-                st.session_state.extracted = False
-                st.toast("Raster ingested.")
-            except Exception:
-                st.error("Invalid image format.")
-                
-        st.markdown("<div style='text-align:center; opacity:0.5; margin: 10px 0; color:var(--text);'>— OR —</div>", unsafe_allow_html=True)
-        
-        if st.button("Generate Demo Quadrant", use_container_width=True):
-            st.session_state.raw_img = generate_synthetic_orthomosaic()
+        st.markdown("### 📥 Ingestion")
+        upl = st.file_uploader("Upload Orthomosaic", type=["png","jpg","jpeg"], label_visibility="collapsed")
+        if upl:
+            st.session_state.raw_img = Image.open(upl).convert("RGB")
             st.session_state.extracted = False
+            st.session_state.is_demo = False
+        if st.button("🌐 Load Demo Map", use_container_width=True):
+            st.session_state.raw_img = demo_map()
+            st.session_state.extracted = False
+            st.session_state.is_demo = True
             
-        st.markdown("---")
-        with st.expander("⚙️ Advanced Parameters"):
+        with st.expander("⚙️ Parameters"):
             st.session_state.gsd = st.slider("GSD (m/px)", 0.01, 0.20, st.session_state.gsd, 0.01)
-            st.session_state.conf = st.slider("AI Confidence", 0.10, 0.90, st.session_state.conf, 0.05)
-            st.session_state.anchor_lat = st.number_input("Anchor Lat", value=st.session_state.anchor_lat, format="%.6f")
-            st.session_state.anchor_lon = st.number_input("Anchor Lon", value=st.session_state.anchor_lon, format="%.6f")
+            st.session_state.conf = st.slider("Confidence", 0.10, 0.90, st.session_state.conf, 0.05)
 
     st.markdown("<h2 style='margin-bottom: 20px;'>🛰️ Cadastral Command Studio</h2>", unsafe_allow_html=True)
-    
-    tab1, tab2, tab3 = st.tabs(["1️⃣ Extraction Studio", "2️⃣ Interactive WebGIS", "3️⃣ Audit & Certification"])
+    t1, t2, t3 = st.tabs([t('tab1'), t('tab2'), t('tab3')])
 
-    with tab1:
-        if st.session_state.raw_img is None:
-            st.info("👋 **Welcome to the Command Studio!**\n\nPlease start by uploading a drone raster or clicking **'Generate Demo Quadrant'** in the left sidebar.")
+    with t1:
+        if not st.session_state.raw_img: st.info("Upload an image in the sidebar.")
         else:
-            col_l, col_r = st.columns([1, 1])
-            with col_l:
+            cl, cr = st.columns(2)
+            with cl:
                 st.image(st.session_state.raw_img, use_container_width=True)
-                if not AI_AVAILABLE:
-                    st.error("Ultralytics library not found.")
-                else:
-                    if st.button("⚡ Execute Neural Pipeline", type="primary", use_container_width=True):
-                        with st.spinner("Analyzing structures & generating vectors..."):
-                            t_start = time.time()
+                if st.button("⚡ Execute AI Pipeline", type="primary", use_container_width=True):
+                    with st.spinner("Extracting..."):
+                        ts = time.time()
+                        parcels, feats = [], []
+                        
+                        if st.session_state.is_demo:
+                            boxes = [[60,50,280,280], [340,60,590,290], [660,50,940,280]]
+                            for b in boxes:
+                                xy = [(b[0],b[1]), (b[2],b[1]), (b[2],b[3]), (b[0],b[3])]
+                                sqm = round(float(Polygon(xy).area * (st.session_state.gsd**2)), 2)
+                                perim = round(float(Polygon(xy).length * st.session_state.gsd), 2)
+                                upin = f"WB-{uuid.uuid4().hex[:6].upper()}"
+                                parcels.append({"UPIN": upin, "Verified": False, "Area (m²)": sqm, "Perimeter (m)": perim, "Confidence (%)": 99.9, "Verified By": ""})
+                                coords = [px_to_latlon(p[0], p[1], st.session_state.anchor_lat, st.session_state.anchor_lon, st.session_state.gsd) for p in xy] + [px_to_latlon(xy[0][0], xy[0][1], st.session_state.anchor_lat, st.session_state.anchor_lon, st.session_state.gsd)]
+                                feats.append({"type":"Feature", "properties":{"upin":upin, "area":sqm}, "geometry":{"type":"Polygon", "coordinates":[coords]}})
+                            st.session_state.ai_img = st.session_state.raw_img
+                        else:
                             model = load_segmentation_model()
                             if model:
                                 pred = model.predict(st.session_state.raw_img, conf=st.session_state.conf, save=False)
-                                parcels, geojson_features = [], []
                                 if pred[0].masks is not None:
-                                    annotated_bgr = pred[0].plot()
-                                    st.session_state.ai_img = Image.fromarray(annotated_bgr[..., ::-1])
-                                    
-                                    for idx, (mask_xy, box) in enumerate(zip(pred[0].masks.xy, pred[0].boxes)):
-                                        if len(mask_xy) < 3: continue
-                                        poly = Polygon(mask_xy)
-                                        sqm = round(float(poly.area * (st.session_state.gsd ** 2)), 2)
-                                        perimeter = round(float(poly.length * st.session_state.gsd), 2)
-                                        conf = round(float(box.conf[0]) * 100, 1)
-                                        upin = f"WB-{idx+101:04d}"
-                                        
-                                        parcels.append({"UPIN": upin, "Verified": False, "Area (m²)": sqm, "Perimeter (m)": perimeter, "Confidence (%)": conf})
-                                        coords = [[st.session_state.anchor_lon + (float(pt[0]) * st.session_state.gsd * M_TO_DEG), st.session_state.anchor_lat - (float(pt[1]) * st.session_state.gsd * M_TO_DEG)] for pt in mask_xy]
-                                        coords.append(coords[0])
-                                        geojson_features.append({"type": "Feature", "properties": {"upin": upin, "area": sqm}, "geometry": {"type": "Polygon", "coordinates": [coords]}})
-                                else:
-                                    st.session_state.ai_img = st.session_state.raw_img
-                                    st.warning("No structures detected.")
-                                    
-                                st.session_state.survey_df = pd.DataFrame(parcels) if parcels else pd.DataFrame(columns=["UPIN", "Verified", "Area (m²)", "Perimeter (m)", "Confidence (%)"])
-                                st.session_state.geo_json = {"type": "FeatureCollection", "features": geojson_features}
-                                st.session_state.latency = round(time.time() - t_start, 2)
-                                st.session_state.extracted = True
-                                st.rerun()
+                                    st.session_state.ai_img = Image.fromarray(pred[0].plot()[..., ::-1])
+                                    for idx, (mxy, box) in enumerate(zip(pred[0].masks.xy, pred[0].boxes)):
+                                        if len(mxy) < 3: continue
+                                        poly = Polygon(mxy).simplify(1.5, preserve_topology=True)
+                                        sqm = round(float(poly.area * (st.session_state.gsd**2)), 2)
+                                        parcels.append({"UPIN": f"WB-{uuid.uuid4().hex[:6].upper()}", "Verified": False, "Area (m²)": sqm, "Perimeter (m)": round(float(poly.length * st.session_state.gsd), 2), "Confidence (%)": round(float(box.conf[0])*100, 1), "Verified By": ""})
+                                        coords = [px_to_latlon(p[0], p[1], st.session_state.anchor_lat, st.session_state.anchor_lon, st.session_state.gsd) for p in list(poly.exterior.coords)]
+                                        feats.append({"type":"Feature", "properties":{"area":sqm}, "geometry":{"type":"Polygon", "coordinates":[coords]}})
 
-            with col_r:
-                if st.session_state.extracted and st.session_state.ai_img:
-                    st.image(st.session_state.ai_img, use_container_width=True)
-                else:
-                    st.info("Waiting for pipeline execution...")
+                        st.session_state.survey_df = pd.DataFrame(parcels)
+                        st.session_state.geo_json = {"type": "FeatureCollection", "features": feats}
+                        st.session_state.extracted = True
+                        st.session_state.latency = round(time.time() - ts, 2)
+                        st.rerun()
+            with cr:
+                if st.session_state.extracted: st.image(st.session_state.ai_img, use_container_width=True)
 
-    with tab2:
-        if not st.session_state.extracted or st.session_state.geo_json is None or not st.session_state.geo_json["features"]:
-            st.info("🗺️ **No Spatial Data.** Execute Step 1 to generate vectors.")
-        else:
-            tiles = "CartoDB Dark_Matter" if st.session_state.theme == "dark" else "CartoDB positron"
-            try:
-                m = folium.Map(location=[st.session_state.anchor_lat, st.session_state.anchor_lon], zoom_start=18, tiles=tiles)
-                folium.GeoJson(
-                    st.session_state.geo_json,
-                    style_function=lambda x: {"fillColor": "#0EA5E9", "color": "#0284C7", "weight": 2, "fillOpacity": 0.4},
-                    tooltip=folium.GeoJsonTooltip(fields=["upin", "area"], aliases=["UPIN:", "Area (m²):"])
-                ).add_to(m)
-                plugins.Fullscreen().add_to(m)
-                m.fit_bounds(m.get_bounds())
-                st_folium(m, width="100%", height=550, returned_objects=[])
-                st.download_button("📥 Export OGC GeoJSON", data=json.dumps(st.session_state.geo_json), file_name="parcels.geojson", mime="application/geo+json")
-            except Exception as e:
-                st.error(f"Map Render Error: {e}")
+    with t2:
+        if st.session_state.extracted and st.session_state.geo_json:
+            m = folium.Map(location=[st.session_state.anchor_lat, st.session_state.anchor_lon], zoom_start=18, tiles="CartoDB Dark_Matter" if st.session_state.theme=="dark" else "CartoDB positron")
+            folium.GeoJson(st.session_state.geo_json, style_function=lambda x: {"fillColor": "#0EA5E9", "color": "#0284C7", "weight": 2}).add_to(m)
+            plugins.Fullscreen().add_to(m)
+            m.fit_bounds(m.get_bounds())
+            st_folium(m, width="100%", height=500, returned_objects=[])
 
-    with tab3:
-        if not st.session_state.extracted or st.session_state.survey_df.empty:
-            st.info("📄 **No Audit Data.** Execute Step 1 to populate ledger.")
-        else:
+    with t3:
+        if st.session_state.extracted and not st.session_state.survey_df.empty:
             df = st.session_state.survey_df
-            m1, m2, m3, m4 = st.columns(4)
+            m1, m2, m3 = st.columns(3)
             m1.markdown(f'<div class="metric-tile"><div class="metric-val">{len(df)}</div><div class="metric-lbl">Parcels</div></div>', unsafe_allow_html=True)
-            m2.markdown(f'<div class="metric-tile"><div class="metric-val">{df["Area (m²)"].sum():,.0f}</div><div class="metric-lbl">Total m²</div></div>', unsafe_allow_html=True)
-            m3.markdown(f'<div class="metric-tile"><div class="metric-val">{st.session_state.latency}s</div><div class="metric-lbl">Compute Time</div></div>', unsafe_allow_html=True)
-            m4.markdown(f'<div class="metric-tile"><div class="metric-val">{(df["Verified"] == True).sum()}</div><div class="metric-lbl">Approved</div></div>', unsafe_allow_html=True)
+            m2.markdown(f'<div class="metric-tile"><div class="metric-val">{st.session_state.latency}s</div><div class="metric-lbl">Time</div></div>', unsafe_allow_html=True)
+            m3.markdown(f'<div class="metric-tile"><div class="metric-val">{(df["Verified"]==True).sum()}</div><div class="metric-lbl">Verified</div></div>', unsafe_allow_html=True)
             
             st.markdown("---")
-            st.markdown("##### 🧑‍💻 Surveyor Verification Ledger")
-            edited_df = st.data_editor(df, use_container_width=True, hide_index=True, disabled=["UPIN", "Area (m²)", "Perimeter (m)", "Confidence (%)"])
-            st.session_state.survey_df = edited_df
+            edf = st.data_editor(df, hide_index=True, disabled=["UPIN","Area (m²)","Perimeter (m)","Confidence (%)","Verified By"], use_container_width=True)
+            for i in edf.index:
+                if edf.at[i, 'Verified'] and not edf.at[i, 'Verified By']: edf.at[i, 'Verified By'] = st.session_state.user
+                elif not edf.at[i, 'Verified']: edf.at[i, 'Verified By'] = ""
+            st.session_state.survey_df = edf
             
-            cleared = edited_df[edited_df["Verified"] == True]
+            cleared = edf[edf["Verified"] == True]
             if not cleared.empty:
                 st.markdown("---")
-                col_sel, col_prev = st.columns([1.2, 2])
-                with col_sel:
-                    selected_upin = st.selectbox("Select Cleared UPIN for Issuance:", cleared["UPIN"].tolist())
-                    record = cleared[cleared["UPIN"] == selected_upin].iloc[0]
-                    
-                    pdf_bytes = generate_pdf(record, st.session_state.anchor_lat, st.session_state.anchor_lon)
-                    if pdf_bytes:
-                        st.download_button("🖨️ Download Form 7 PDF", data=pdf_bytes, file_name=f"{record['UPIN']}_Certificate.pdf", mime="application/pdf", type="primary", use_container_width=True)
-                    st.download_button("📥 Export Secure Ledger", data=edited_df.to_csv(index=False).encode('utf-8'), file_name="Cadastral_Register.csv", mime="text/csv", use_container_width=True)
-                    
-                with col_prev:
-                    qr_b64 = make_qr_code(f"SVAMITVA:{record['UPIN']}|AREA:{record['Area (m²)']}sqm")
-                    st.markdown(f"""
-                    <div style="background: var(--surface-solid); border: 1px solid var(--border); border-radius: 16px; padding: 24px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <div><h3 style="margin:0; font-family:'Space Grotesk', sans-serif;">{record['UPIN']}</h3><p style="margin:4px 0 0 0; color:#10B981; font-weight:700; font-size:0.85rem;">✔ TITLE CLEARED (FORM 7)</p></div>
-                            <img src="data:image/png;base64,{qr_b64}" alt="QR Code" width="75" style="border-radius: 6px;" />
-                        </div>
-                        <hr style="border:none; border-bottom: 1px solid var(--border); margin: 16px 0;">
-                        <p style="margin: 6px 0; font-size: 0.9rem;"><b>Ground Footprint:</b> {record['Area (m²)']} m²</p>
-                        <p style="margin: 6px 0; font-size: 0.9rem;"><b>Perimeter:</b> {record['Perimeter (m)']} m</p>
-                    </div>
-                    """, unsafe_allow_html=True)
+                c1, c2 = st.columns([1,1])
+                with c1:
+                    zip_data = generate_batch_zip(cleared, st.session_state.anchor_lat, st.session_state.anchor_lon, st.session_state.user)
+                    st.download_button("🗂️ Download All Records (ZIP)", data=zip_data, file_name="SVAMITVA_Batch.zip", mime="application/zip", type="primary", use_container_width=True)
