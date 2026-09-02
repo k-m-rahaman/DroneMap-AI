@@ -251,7 +251,8 @@ with c_toggle:
 
 with c_cta:
     if st.session_state.view == "landing":
-        st.button(t("btn_explore"), type="primary", on_click=set_view, args=("auth",), use_container_width=True)
+        # Added unique key
+        st.button(t("btn_explore"), type="primary", on_click=set_view, args=("auth",), use_container_width=True, key="nav_explore_btn")
     elif st.session_state.view == "auth":
         st.button("Back", on_click=set_view, args=("landing",), use_container_width=True)
     else:
@@ -279,7 +280,9 @@ if st.session_state.view == "landing":
     """, unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([2,1,2])
-    with col2: st.button(t('btn_explore'), type="primary", on_click=set_view, args=("auth",), use_container_width=True)
+    with col2: 
+        # Added unique key
+        st.button(t('btn_explore'), type="primary", on_click=set_view, args=("auth",), use_container_width=True, key="hero_explore_btn")
 
     c1 = get_base64_image("challenge_1.png")
     c2 = get_base64_image("challenge_2.png")
