@@ -43,21 +43,21 @@ TRANSLATIONS = {
         "sub": "DroneMap AI transforms raw aerial telemetry into dispute-free, legally binding cadastral property titles instantly.",
         "btn_explore": "Launch Command Studio", "login_title": "Secure Surveyor Access",
         "login_sub": "Authorized Personnel Only", "btn_login": "Authenticate",
-        "tab1": "1️⃣ Neural Extraction Studio", "tab2": "2️⃣ WebGIS Cartography", "tab3": "3️⃣ Audit & Certification"
+        "tab1": "1️⃣ Neural Extraction", "tab2": "2️⃣ WebGIS Cartography", "tab3": "3️⃣ Audit Ledger"
     },
     "hi": {
         "tag": "स्वामित्व योजना अनुरूप", "hero": "भूमि स्वामित्व के", "hero_span": "भविष्य का मानचित्रण",
         "sub": "DroneMap AI कच्चे ड्रोन डेटा को सत्यापन-योग्य भूमि अभिलेखों में बदलता है।",
         "btn_explore": "कमांड स्टूडियो खोलें", "login_title": "सुरक्षित सर्वेक्षक लॉगिन",
         "login_sub": "केवल अधिकृत कर्मियों के लिए", "btn_login": "प्रमाणित करें",
-        "tab1": "1️⃣ निष्कर्षण स्टूडियो", "tab2": "2️⃣ WebGIS मानचित्र", "tab3": "3️⃣ ऑडिट और प्रमाणन"
+        "tab1": "1️⃣ निष्कर्षण स्टूडियो", "tab2": "2️⃣ WebGIS मानचित्र", "tab3": "3️⃣ ऑडिट रजिस्टर"
     },
     "bn": {
         "tag": "SVAMITVA প্রকল্প অনুবর্তী", "hero": "ভূমি মালিকানার", "hero_span": "ভবিষ্যৎ মানচিত্রায়ণ",
         "sub": "DroneMap AI কাঁচা ড্রোন তথ্যকে যাচাইযোগ্য ভূমি নথিতে রূপান্তর করে।",
         "btn_explore": "কমান্ড স্টুডিও চালু করুন", "login_title": "নিরাপদ সার্ভেয়ার অ্যাক্সেস",
         "login_sub": "শুধুমাত্র অনুমোদিত কর্মীদের জন্য", "btn_login": "প্রবেশ করুন",
-        "tab1": "1️⃣ নিষ্কাশন স্টুডিও", "tab2": "2️⃣ WebGIS মানচিত্র", "tab3": "3️⃣ অডিট ও প্রত্যয়ন"
+        "tab1": "1️⃣ নিষ্কাশন স্টুডিও", "tab2": "2️⃣ WebGIS মানচিত্র", "tab3": "3️⃣ অডিট লেজার"
     }
 }
 
@@ -78,7 +78,8 @@ def play_voice(text, lang='en'):
 # =====================================================================
 # 2. SYSTEM INITIALIZATION & STATE
 # =====================================================================
-st.set_page_config(page_title="DroneMap AI | Workspace", page_icon="🛰️", layout="wide", initial_sidebar_state="collapsed")
+# Sidebar is now PERMANENTLY EXPANDED by default
+st.set_page_config(page_title="DroneMap AI | Workspace", page_icon="🛰️", layout="wide", initial_sidebar_state="expanded")
 
 def init_state(key, default):
     if key not in st.session_state: st.session_state[key] = default
@@ -104,57 +105,36 @@ init_state("anchor_lon", 88.3639)
 def set_view(v): st.session_state.view = v
 
 # =====================================================================
-# 3. UNIFIED NEURAL BRAND CSS (No Dark/Light Toggle)
+# 3. CLEAN, READABLE ENTERPRISE CSS
 # =====================================================================
 def inject_theme():
-    # Locked Modern Neutral Palette
-    bg = "#F4F7F6"          # Off-white cool gray canvas
-    surface = "#FFFFFF"     # Pure white cards
-    header = "#0F172A"      # Deep Navy for authority
-    text = "#1E293B"        # Slate 800
-    subtext = "#64748B"     # Slate 500
-    accent = "#0284C7"      # Trustworthy Sky Blue
-    border = "#E2E8F0"      # Subtle lines
-    
     st.markdown(f"""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
-        * {{ font-family: 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.015em; }}
         
-        .stApp, [data-testid="stHeader"] {{ background-color: {bg}; color: {text}; }}
-        [data-testid="block-container"] {{ padding-top: 6rem !important; }}
+        html, body, [class*="css"] {{ font-family: 'Plus Jakarta Sans', sans-serif; }}
+        
+        /* Force light theme readability for main elements */
+        [data-testid="stAppViewContainer"] {{ background-color: #F8FAFC; color: #0F172A; }}
+        [data-testid="stSidebar"] {{ background-color: #FFFFFF; border-right: 1px solid #E2E8F0; }}
+        
+        /* Hide Default Streamlit Clutter */
         #MainMenu, footer {{ visibility: hidden; }}
         
-        /* Fixed Navy Header */
-        .nav-island {{
-            position: fixed; top: 0; left: 0; width: 100%; z-index: 99999;
-            background: {header}; border-bottom: 3px solid {accent};
-            padding: 12px 40px; display: flex; justify-content: space-between; align-items: center;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        }}
-        
-        /* Clean Sidebar */
-        [data-testid="stSidebar"] {{ background-color: {surface} !important; border-right: 1px solid {border}; }}
-        
-        h1, h2, h3, h4 {{ color: {text} !important; font-weight: 700; }}
-        p, span, div {{ color: {text}; }}
-        
         /* Hero Section */
-        .hero-wrap {{ text-align: center; max-width: 900px; margin: 60px auto; }}
-        .hero-title {{ font-size: clamp(2.5rem, 5vw, 4.5rem); font-weight: 800; line-height: 1.1; margin: 20px 0; }}
-        .hero-title span {{ color: {accent}; }}
+        .hero-wrap {{ text-align: center; max-width: 900px; margin: 40px auto; }}
+        .hero-title {{ font-size: clamp(2.5rem, 5vw, 4.5rem); font-weight: 800; line-height: 1.1; margin: 20px 0; color: #0F172A; }}
+        .hero-title span {{ color: #0284C7; }}
         
-        /* Clean Cards & Auth */
-        .glass-box {{ background: {surface}; border: 1px solid {border}; border-radius: 16px; padding: 40px; max-width: 450px; margin: 10vh auto; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.05); }}
-        .metric-tile {{ background: {surface}; border: 1px solid {border}; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.02); }}
-        .metric-val {{ font-size: 2.2rem; font-weight: 800; color: {accent}; }}
-        .metric-lbl {{ font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: {subtext}; }}
+        /* Clean Metric Cards */
+        .metric-tile {{ background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }}
+        .metric-val {{ font-size: 2.2rem; font-weight: 800; color: #0284C7; }}
+        .metric-lbl {{ font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #64748B; }}
         
-        /* Prominent Buttons */
-        .stButton > button {{ border-radius: 8px !important; font-weight: 600 !important; background: {surface} !important; border: 1px solid {border} !important; color: {text} !important; transition: all 0.2s; }}
-        .stButton > button:hover {{ border-color: {accent} !important; color: {accent} !important; }}
-        .stButton > button[data-testid="baseButton-primary"] {{ background: {accent} !important; color: #FFFFFF !important; border: none !important; }}
-        .stButton > button[data-testid="baseButton-primary"]:hover {{ filter: brightness(1.1); }}
+        /* Primary Buttons */
+        div.stButton > button {{ border-radius: 8px; font-weight: 600; border: 1px solid #CBD5E1; transition: all 0.2s; }}
+        div.stButton > button[data-testid="baseButton-primary"] {{ background-color: #0284C7; color: white !important; border: none; }}
+        div.stButton > button[data-testid="baseButton-primary"]:hover {{ background-color: #0369A1; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -168,14 +148,6 @@ def px_to_latlon(px_x, px_y, anchor_lat, anchor_lon, gsd):
     lon_deg_per_m = 1.0 / (111320 * math.cos(lat_rad))
     lat_deg_per_m = 1.0 / 110540 
     return [anchor_lon + (px_x * gsd * lon_deg_per_m), anchor_lat - (px_y * gsd * lat_deg_per_m)]
-
-@st.cache_data(show_spinner=False)
-def get_base64_image(image_path):
-    if image_path and os.path.exists(image_path):
-        with open(image_path, "rb") as f: return base64.b64encode(f.read()).decode()
-    img = Image.new("RGB", (800, 500), color=(241,245,249))
-    buf = io.BytesIO(); img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
 
 @st.cache_resource
 def load_segmentation_model():
@@ -191,15 +163,15 @@ def make_qr(data):
 
 class SVAMITVADocument(FPDF):
     def header(self):
-        self.set_font("Helvetica", 'B', 15); self.set_text_color(15, 23, 42)
+        self.set_font("Helvetica", 'B', 15)
         self.cell(0, 10, "MINISTRY OF PANCHAYATI RAJ", ln=True, align="C")
-        self.set_font("Helvetica", '', 11); self.set_text_color(100, 116, 139)
+        self.set_font("Helvetica", '', 11)
         self.cell(0, 6, "SVAMITVA Property Register Record", ln=True, align="C")
         self.line(10, 30, 200, 30); self.ln(6)
 
 def generate_pdf(row, lat, lon, user):
     pdf = SVAMITVADocument(orientation='P', unit='mm', format='A4')
-    pdf.add_page(); pdf.set_font("Helvetica", 'B', 11); pdf.set_text_color(15, 23, 42)
+    pdf.add_page(); pdf.set_font("Helvetica", 'B', 11)
     entries = [
         ("UPIN", str(row['UPIN'])), ("Ground Footprint", f"{row['Area (m²)']} sqm"),
         ("Boundary Perimeter", f"{row['Perimeter (m)']} m"), ("Geospatial Centroid", f"{lat:.6f} N, {lon:.6f} E"),
@@ -234,39 +206,38 @@ def get_conf_color(conf):
     return "#EF4444"
 
 # =====================================================================
-# 5. HEADER & NAVIGATION
+# 5. NATIVE HEADER & NAVIGATION
 # =====================================================================
-st.markdown("<div class='nav-island'>", unsafe_allow_html=True)
-c_logo, c_lang, c_voice, c_cta = st.columns([4, 1.5, 2, 2.5])
-with c_logo:
-    logo = next((f"my_logo.{e}" for e in ["png","jpg","jpeg"] if os.path.exists(f"my_logo.{e}")), "logo.png")
-    st.markdown(f"<div style='display:flex; align-items:center; gap:12px;'><img src='data:image/png;base64,{get_base64_image(logo)}' height='32'><span style='font-weight:800; font-size:1.2rem; color:#FFFFFF;'>DroneMap AI</span></div>", unsafe_allow_html=True)
+# Using native Streamlit columns ensures the layout never breaks
+top_left, top_mid1, top_mid2, top_right = st.columns([4, 2, 2, 2], vertical_alignment="bottom")
 
-with c_lang:
-    lang_sel = st.selectbox("🌐", ["en", "hi", "bn"], index=["en","hi","bn"].index(st.session_state.lang), label_visibility="collapsed", key="lang_select")
+with top_left:
+    st.markdown("<h3 style='margin:0; padding:0; color:#0F172A;'>🛰️ DroneMap AI</h3>", unsafe_allow_html=True)
+
+with top_mid1:
+    lang_sel = st.selectbox("🌐 Language", ["en", "hi", "bn"], index=["en","hi","bn"].index(st.session_state.lang), label_visibility="collapsed", key="lang_select")
     if lang_sel != st.session_state.lang:
         st.session_state.lang = lang_sel
         st.rerun()
 
-with c_voice:
+with top_mid2:
     if st.session_state.view == "workspace":
-        if st.button("🎙️ Audio Brief", key="nav_audio"):
-            msgs = {"en": "Workspace active. Awaiting extraction command.", "hi": "सिस्टम तैयार है।", "bn": "সিস্টেম প্রস্তুত।"}
+        if st.button("🎙️ Audio Brief", key="nav_audio", use_container_width=True):
+            msgs = {"en": "Workspace active. Awaiting extraction.", "hi": "सिस्टम तैयार है।", "bn": "সিস্টেম প্রস্তুত।"}
             play_voice(msgs[st.session_state.lang], st.session_state.lang)
 
-with c_cta:
+with top_right:
     if st.session_state.view == "landing":
         st.button(t("btn_explore"), type="primary", on_click=set_view, args=("auth",), use_container_width=True, key="nav_explore")
     elif st.session_state.view == "auth":
-        st.button("Return to Home", on_click=set_view, args=("landing",), use_container_width=True, key="nav_home")
+        st.button("Back Home", on_click=set_view, args=("landing",), use_container_width=True, key="nav_home")
     else:
-        c_user, c_out = st.columns([1.5, 1])
-        with c_user: st.markdown(f"<div style='color:white; margin-top:8px; font-weight:600;'>ID: {st.session_state.user}</div>", unsafe_allow_html=True)
-        with c_out: 
-            if st.button("Logout", key="nav_logout"):
-                st.session_state.auth = False
-                set_view("landing"); st.rerun()
-st.markdown("</div>", unsafe_allow_html=True)
+        if st.button("🚪 Logout", use_container_width=True, key="nav_logout"):
+            st.session_state.auth = False
+            set_view("landing")
+            st.rerun()
+
+st.divider() # Clean visual separator
 
 # =====================================================================
 # 6. ROUTING (LANDING -> AUTH -> WORKSPACE)
@@ -274,35 +245,42 @@ st.markdown("</div>", unsafe_allow_html=True)
 if st.session_state.view == "landing":
     st.markdown(f"""
     <div class="hero-wrap">
-        <div style="display:inline-block; border: 1px solid var(--accent); color: var(--accent); padding: 6px 16px; border-radius: 9999px; font-size: 0.8rem; font-weight: 800; text-transform: uppercase; margin-bottom: 20px; background: rgba(2, 132, 199, 0.05);">{t('tag')}</div>
+        <div style="display:inline-block; border: 1px solid #0284C7; color: #0284C7; padding: 6px 16px; border-radius: 9999px; font-size: 0.8rem; font-weight: 800; text-transform: uppercase; margin-bottom: 20px; background: rgba(2, 132, 199, 0.05);">{t('tag')}</div>
         <div class="hero-title">{t('hero')}<br><span>{t('hero_span')}</span></div>
-        <p style="font-size: 1.1rem; color: var(--subtext); max-width:700px; margin:0 auto;">{t('sub')}</p>
+        <p style="font-size: 1.1rem; color: #64748B; max-width:700px; margin:0 auto;">{t('sub')}</p>
     </div>
     """, unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1.5, 1, 1.5])
-    with col2: st.button(t('btn_explore'), type="primary", on_click=set_view, args=("auth",), use_container_width=True, key="hero_explore")
+    with col2: 
+        st.button(t('btn_explore'), type="primary", on_click=set_view, args=("auth",), use_container_width=True, key="hero_explore")
 
 elif st.session_state.view == "auth":
-    st.markdown(f"""
-    <div class='glass-box'>
-        <h2 style='color:var(--accent); margin-bottom:5px;'>{t('login_title')}</h2>
-        <p style='color:var(--subtext); margin-bottom:30px; font-weight:600;'>{t('login_sub')}</p>
-    </div>""", unsafe_allow_html=True)
-    
-    c1, c2, c3 = st.columns([1,1,1])
-    with c2:
-        uid = st.text_input("Surveyor ID", value="Kazi.M")
-        pwd = st.text_input("Passcode", type="password", value="demo")
-        if st.button(t('btn_login'), type="primary", use_container_width=True, key="auth_login"):
-            with st.spinner("Authenticating secure connection..."):
-                time.sleep(1)
-                st.session_state.auth = True
-                st.session_state.user = uid
-                set_view("workspace"); st.rerun()
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col2:
+        st.markdown(f"<h2 style='text-align:center; color:#0284C7;'>{t('login_title')}</h2>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align:center; color:#64748B; margin-bottom:30px;'>{t('login_sub')}</p>", unsafe_allow_html=True)
+        
+        with st.container(border=True):
+            uid = st.text_input("Surveyor ID", value="Kazi.M")
+            pwd = st.text_input("Passcode", type="password", help="The demo passcode is: demo")
+            
+            if st.button(t('btn_login'), type="primary", use_container_width=True, key="auth_login"):
+                # FIXED AUTHENTICATION LOGIC
+                if uid.strip() != "" and pwd == "demo":
+                    with st.spinner("Authenticating secure connection..."):
+                        time.sleep(1)
+                        st.session_state.auth = True
+                        st.session_state.user = uid.strip()
+                        set_view("workspace")
+                        st.rerun()
+                else:
+                    st.error("Invalid ID or Passcode. Hint: Use 'demo'")
 
 elif st.session_state.view == "workspace" and st.session_state.auth:
     with st.sidebar:
+        st.markdown(f"**👤 Surveyor ID:** `{st.session_state.user}`")
+        st.markdown("---")
         st.markdown("### 📥 Telemetry Ingestion")
         upl = st.file_uploader("Upload Drone Orthomosaic", type=["png","jpg","jpeg"], label_visibility="collapsed")
         if upl:
@@ -316,7 +294,6 @@ elif st.session_state.view == "workspace" and st.session_state.auth:
             
         st.markdown("---")
         st.markdown("### ⚙️ Calibration Parameters")
-        # Placing parameters directly in the sidebar for high visibility
         with st.form("param_form"):
             new_gsd = st.slider("GSD (m/px)", 0.01, 0.20, st.session_state.gsd, 0.01)
             new_conf = st.slider("AI Confidence Threshold", 0.10, 0.90, st.session_state.conf, 0.05)
@@ -327,11 +304,12 @@ elif st.session_state.view == "workspace" and st.session_state.auth:
                 st.session_state.anchor_lat = new_lat; st.session_state.anchor_lon = new_lon
                 st.session_state.extracted = False; st.rerun()
 
-    st.markdown("<h2 style='margin-bottom: 25px;'>Cadastral Command Studio</h2>", unsafe_allow_html=True)
+    st.markdown("<h2>Cadastral Command Studio</h2>", unsafe_allow_html=True)
     t1, t2, t3 = st.tabs([t('tab1'), t('tab2'), t('tab3')])
 
     with t1:
-        if not st.session_state.raw_img: st.info("Welcome to the workspace. Please ingest data via the sidebar to begin.")
+        if not st.session_state.raw_img: 
+            st.info("Welcome to the workspace. Please ingest data via the sidebar to begin.")
         else:
             cl, cr = st.columns(2)
             with cl:
