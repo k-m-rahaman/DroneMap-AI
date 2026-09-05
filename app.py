@@ -19,7 +19,7 @@ from streamlit_folium import st_folium
 import qrcode
 from fpdf import FPDF
 
-# Voice Assistant & AI Imports (Failsafe)
+# Voice Assistant & AI Imports
 try:
     from gtts import gTTS
     AUDIO_OK = True
@@ -78,7 +78,6 @@ def play_voice(text, lang='en'):
 # =====================================================================
 # 2. SYSTEM INITIALIZATION & STATE
 # =====================================================================
-# Sidebar is now PERMANENTLY EXPANDED by default
 st.set_page_config(page_title="DroneMap AI | Workspace", page_icon="🛰️", layout="wide", initial_sidebar_state="expanded")
 
 def init_state(key, default):
@@ -96,7 +95,6 @@ init_state("extracted", False)
 init_state("is_demo", False)
 init_state("latency", 0.0)
 
-# Parameters
 init_state("gsd", 0.05)
 init_state("conf", 0.25)
 init_state("anchor_lat", 22.5726)
@@ -105,7 +103,7 @@ init_state("anchor_lon", 88.3639)
 def set_view(v): st.session_state.view = v
 
 # =====================================================================
-# 3. CLEAN, READABLE ENTERPRISE CSS
+# 3. NON-DESTRUCTIVE CSS THEME
 # =====================================================================
 def inject_theme():
     st.markdown(f"""
@@ -114,25 +112,17 @@ def inject_theme():
         
         html, body, [class*="css"] {{ font-family: 'Plus Jakarta Sans', sans-serif; }}
         
-        /* Force light theme readability for main elements */
-        [data-testid="stAppViewContainer"] {{ background-color: #F8FAFC; color: #0F172A; }}
-        [data-testid="stSidebar"] {{ background-color: #FFFFFF; border-right: 1px solid #E2E8F0; }}
-        
-        /* Hide Default Streamlit Clutter */
         #MainMenu, footer {{ visibility: hidden; }}
         
-        /* Hero Section */
         .hero-wrap {{ text-align: center; max-width: 900px; margin: 40px auto; }}
-        .hero-title {{ font-size: clamp(2.5rem, 5vw, 4.5rem); font-weight: 800; line-height: 1.1; margin: 20px 0; color: #0F172A; }}
+        .hero-title {{ font-size: clamp(2.5rem, 5vw, 4.5rem); font-weight: 800; line-height: 1.1; margin: 20px 0; }}
         .hero-title span {{ color: #0284C7; }}
         
-        /* Clean Metric Cards */
-        .metric-tile {{ background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }}
+        .metric-tile {{ border: 1px solid #E2E8F0; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }}
         .metric-val {{ font-size: 2.2rem; font-weight: 800; color: #0284C7; }}
         .metric-lbl {{ font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #64748B; }}
         
-        /* Primary Buttons */
-        div.stButton > button {{ border-radius: 8px; font-weight: 600; border: 1px solid #CBD5E1; transition: all 0.2s; }}
+        div.stButton > button {{ border-radius: 8px; font-weight: 600; transition: all 0.2s; }}
         div.stButton > button[data-testid="baseButton-primary"] {{ background-color: #0284C7; color: white !important; border: none; }}
         div.stButton > button[data-testid="baseButton-primary"]:hover {{ background-color: #0369A1; }}
     </style>
@@ -208,11 +198,10 @@ def get_conf_color(conf):
 # =====================================================================
 # 5. NATIVE HEADER & NAVIGATION
 # =====================================================================
-# Using native Streamlit columns ensures the layout never breaks
 top_left, top_mid1, top_mid2, top_right = st.columns([4, 2, 2, 2], vertical_alignment="bottom")
 
 with top_left:
-    st.markdown("<h3 style='margin:0; padding:0; color:#0F172A;'>🛰️ DroneMap AI</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='margin:0; padding:0;'>🛰️ DroneMap AI</h3>", unsafe_allow_html=True)
 
 with top_mid1:
     lang_sel = st.selectbox("🌐 Language", ["en", "hi", "bn"], index=["en","hi","bn"].index(st.session_state.lang), label_visibility="collapsed", key="lang_select")
@@ -237,7 +226,7 @@ with top_right:
             set_view("landing")
             st.rerun()
 
-st.divider() # Clean visual separator
+st.divider()
 
 # =====================================================================
 # 6. ROUTING (LANDING -> AUTH -> WORKSPACE)
@@ -266,7 +255,6 @@ elif st.session_state.view == "auth":
             pwd = st.text_input("Passcode", type="password", help="The demo passcode is: demo")
             
             if st.button(t('btn_login'), type="primary", use_container_width=True, key="auth_login"):
-                # FIXED AUTHENTICATION LOGIC
                 if uid.strip() != "" and pwd == "demo":
                     with st.spinner("Authenticating secure connection..."):
                         time.sleep(1)
